@@ -3,6 +3,7 @@
 
 import io
 import random
+import sqlite3
 import time
 
 import pandas
@@ -41,21 +42,25 @@ class DataGenerator:
     def __init__(self, inputfile, batch_size, **kwargs):
         self.inputfile = inputfile
         self.batch_size = batch_size
+        self.con = sqlite3.connect(self.inputfile)
 
+    def __del__(self):
+        self.con.close()
 
     def generate(self, labels, idlist):
         while 1:
-            for batch in self._read_data_from_hdf(idlist):
+            for batch in self._read_data_from_sql(idlist):
                 batch = pandas.merge(batch, labels, how='left', on=['id'])
                 Y = batch['label']
                 X = batch.drop(['id', 'label'], axis=1)
-                yield (X, Y)    
+                yield (X, Y)
 
-    def _read_data_from_hdf(self, idlist):
+    def _read_data_from_sql(self, idlist):
         chunklist = [idlist[i:i + self.batch_size] for i in range(0, len(idlist), self.batch_size)]
         for chunk in chunklist:
-            yield pandas.read_hdf(self.inputfile, key='data', where='id in {}'.format(chunk))
-
+            query = 'select * from data where id in {}'.format(tuple(chunk))
+            df = pandas.read_sql(query, self.con)
+            yield df
 
 
 def current_time():
@@ -66,19 +71,23 @@ def elapsed_time(start):
     return seconds_to_time(current_time() - start)
 
 
+def read_labels(path):
+    con = sqlite3.connect(path)
+    labels = pandas.read_sql('select * from labels', con)
+    con.close()
+    return labels
+
+
 # Configuration.
 config = {
-    'inputfile': 'datasets/wine.h5',
+    'inputfile': 'datasets/wine.db',
     'batch_size': 10,
     'epochs': 10,
 }
 
 
-START = current_time()
-
-
 # Datasets.
-labels = pandas.read_hdf('datasets/wine.h5', 'labels')
+labels = read_labels(config['inputfile'])
 partitions = get_partitions(labels['id'], validation_split=0.2)
 
 

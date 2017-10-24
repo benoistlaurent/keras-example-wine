@@ -1,4 +1,5 @@
 
+import sqlite3
 import pandas
 
 
@@ -35,3 +36,10 @@ labels.to_hdf('datasets/wine.h5', 'labels', mode='a', format='table', data_colum
 
 # Save data to csv as well.
 df.to_csv('datasets/wine.csv', index=False)
+
+
+# Save to sqlite as well.
+con = sqlite3.connect('datasets/wine.db')
+df.to_sql('data', con, if_exists='replace', index=False)
+labels.to_sql('labels', con, if_exists='replace', index=False)
+con.close()

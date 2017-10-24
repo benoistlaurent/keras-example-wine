@@ -42,7 +42,6 @@ class DataGenerator:
         self.inputfile = inputfile
         self.batch_size = batch_size
 
-
     def generate(self, labels, idlist):
         while 1:
             for batch in self._read_data_from_hdf(idlist):

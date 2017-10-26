@@ -2,13 +2,23 @@
 """In this example, the dataset is read batch-by-batch by a custom generator."""
 
 import io
+import os
 import random
 import sqlite3
 import time
 
 import pandas
+import numpy
 from keras.models import Sequential
 from keras.layers import Dense
+
+
+# Setup to get reproducible results.
+os.environ['PYTHONHASHSEED'] = '0'
+numpy.random.seed(42)
+random.seed(17)
+
+
 
 
 def seconds_to_time(seconds):
@@ -116,11 +126,30 @@ model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy']
 
 steps_per_epoch = len(partitions['train']) // config['batch_size']
 
+
+history = {'loss': [], 'accuracy': []}
 for epoch in range(config['epochs']):
-    print("epoch {}...".format(epoch + 1))
+    print("epoch {} - ".format(epoch + 1), end='')
+    loss_list = []
+    acc_list = []
     for i in range(steps_per_epoch):
         x_train, y_train = training_generator.next_batch()
-        model.train_on_batch(x_train, y_train)
+        loss, acc = model.train_on_batch(x_train, y_train)
+        loss_list.append(loss)
+        acc_list.append(acc)
+    average_loss = sum(loss_list) / len(loss_list)
+    average_acc = sum(acc_list) / len(acc_list)
+    history['loss'].append(average_loss)
+    history['accuracy'].append(average_acc)
+    print("loss: {:.3f}   accuracy: {:.3f}".format(average_loss, average_acc))
+
+
+from matplotlib import pyplot
+
+pyplot.plot(history['loss'])
+pyplot.plot(history['accuracy'])
+pyplot.show()
+
 
 
 # Fit the model

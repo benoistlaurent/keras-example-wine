@@ -7,45 +7,20 @@ import random
 import sqlite3
 import time
 
-import pandas
-import numpy
-import tensorflow
 from keras.models import Sequential
 from keras.layers import Dense
 import keras.utils as kutils
+
+import pandas
+import numpy
+import tensorflow
+
 
 # Setup to get reproducible results.
 os.environ['PYTHONHASHSEED'] = '0'
 numpy.random.seed(42)
 random.seed(17)
 tensorflow.set_random_seed(123456)
-
-
-def seconds_to_time(seconds):
-    minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    return "{:02.0f}h{:02.0f}m{:02.1f}s".format(hours, minutes, seconds)
-
-
-def get_partitions(idlist, validation_split, shuffle=True):
-    """Get the ids which will be used for the training and the validation.
-
-    Args:
-        idlist (list[str]): list of available ids in the dataset.
-        validation_split (float 0 < x < 1): Fraction of the data to use as
-            held-out validation data.
-        shuffle (bool): If true, shuffle ids.
-
-    Returns:
-        dict[str]->list[str]: a dictionnary with two keys: 'train' and 
-            'validation'. To each key correspond a list of ids.
-    """
-    if shuffle:
-        random.seed(42)  # fix random seed to always get the same results
-        idlist = random.sample(list(idlist), len(idlist))
-    split_at = int(len(idlist) * (1 - validation_split))
-    return {'train': idlist[:split_at],
-            'test': idlist[split_at:]}
 
 
 class DataGenerator:
@@ -70,7 +45,8 @@ class DataGenerator:
 
     def next_batch(self):
         """Get the next data batch."""
-        return next(self._gen)
+        batch = next(self._gen)
+        return batch
 
     def generate(self):
         """Return a batch generator."""
@@ -91,6 +67,13 @@ class DataGenerator:
             yield df
 
 
+
+def seconds_to_time(seconds):
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return "{:02.0f}h{:02.0f}m{:02.1f}s".format(hours, minutes, seconds)
+
+
 def current_time():
     """Return the number of seconds since the epoch.
 
@@ -100,9 +83,36 @@ def current_time():
 
 
 def elapsed_time(start):
+    """Return the number of seconds between `start` and the moment
+    this function is called."""
+    return current_time() - start
+
+
+def elapsed_to_str(start):
     """Return a string "hh:mm:ss" reprensenting the time elapsed since 
     the start time (given in seconds)."""
     return seconds_to_time(current_time() - start)
+
+
+def get_partitions(idlist, validation_split, shuffle=True):
+    """Get the ids which will be used for the training and the validation.
+
+    Args:
+        idlist (list[str]): list of available ids in the dataset.
+        validation_split (float 0 < x < 1): Fraction of the data to use as
+            held-out validation data.
+        shuffle (bool): If true, shuffle ids.
+
+    Returns:
+        dict[str]->list[str]: a dictionnary with two keys: 'train' and 
+            'validation'. To each key correspond a list of ids.
+    """
+    if shuffle:
+        random.seed(42)  # fix random seed to always get the same results
+        idlist = random.sample(list(idlist), len(idlist))
+    split_at = int(len(idlist) * (1 - validation_split))
+    return {'train': idlist[:split_at],
+            'test': idlist[split_at:]}
 
 
 def read_labels(path):
@@ -111,37 +121,6 @@ def read_labels(path):
     labels = pandas.read_sql('select * from labels', con)
     con.close()
     return labels
-
-
-
-# Configuration.
-config = {
-    'inputfile': 'datasets/wine.db',
-    'batch_size': 10,
-    'epochs': 10,
-}
-
-
-# Datasets.
-labels = read_labels(config['inputfile'])
-partitions = get_partitions(labels['id'], validation_split=0.2)
-
-
-# Data generators.
-training_generator = DataGenerator(labels=labels, idlist=partitions['train'], **config)
-test_generator = DataGenerator(labels=labels, idlist=partitions['test'], **config)
-
-
-# Create model
-model = Sequential()
-model.add(Dense(30, input_dim=12, activation='relu'))
-model.add(Dense(160, activation='relu'))
-model.add(Dense(2, activation='sigmoid'))
-
-
-# Compile model
-model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
-
 
 
 def _step(model, data_gen, step_type='train'):
@@ -197,32 +176,65 @@ def validation_step(model, data_gen):
 
 
 
+start = current_time()
+
+
+# Configuration.
+conf = {
+    'inputfile': 'datasets/wine.db',
+    'batch_size': 10,
+    'epochs': 10,
+}
+
+# Datasets.
+labels = read_labels(conf['inputfile'])
+partitions = get_partitions(labels['id'], validation_split=0.2)
+
+
+# Data generators.
+training_generator = DataGenerator(labels=labels, idlist=partitions['train'], **conf)
+test_generator = DataGenerator(labels=labels, idlist=partitions['test'], **conf)
+
+
+# Create model
+model = Sequential()
+model.add(Dense(30, input_dim=12, activation='relu'))
+model.add(Dense(160, activation='relu'))
+model.add(Dense(2, activation='sigmoid'))
+
+
+# Compile model
+model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+
 history = {
     'train-loss': [], 'train-accuracy': [],
     'test-loss': [], 'test-accuracy': [],
 }
 
-for epoch in range(config['epochs']):
+for epoch in range(conf['epochs']):
+    _start = current_time()
+
     # Shuffle training set.
     training_generator.shuffle()
 
     # Training.
+    start_train = current_time()
     train_loss, train_acc = training_step(model, training_generator)
     history['train-loss'].append(train_loss)
     history['train-accuracy'].append(train_acc)
+    elapsed_train = elapsed_time(start)
+    
 
     # Validation.
     test_loss, test_acc = training_step(model, test_generator)
     history['test-loss'].append(train_loss)
     history['test-accuracy'].append(train_acc)
 
-    print("***** epoch {} *****".format(epoch + 1))
-    print("       loss: {:.3f}        accuracy: {:.3f}".format(train_loss, train_acc))
-    print("  test loss: {:.3f}   test accuracy: {:.3f}".format(test_loss, test_acc))
+    print("***** epoch {} *****".format(epoch + 1), flush=True)
+    print("       loss: {:.3f}        accuracy: {:.3f}".format(train_loss, train_acc), flush=True)
+    print("  test loss: {:.3f}   test accuracy: {:.3f}".format(test_loss, test_acc), flush=True)
+    print("  elapsed:", elapsed_to_str(_start), flush=True)
 
 
-
-
-
-
-# print("Elapsed: {}".format(elapsed_time(START)))
+print("Elapsed:", elapsed_to_str(start))

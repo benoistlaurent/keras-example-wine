@@ -1,7 +1,6 @@
 
 """In this example, the dataset is read batch-by-batch by a custom generator."""
 
-import io
 import os
 import random
 import sqlite3
@@ -67,7 +66,6 @@ class DataGenerator:
             yield df
 
 
-
 def seconds_to_time(seconds):
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -89,7 +87,7 @@ def elapsed_time(start):
 
 
 def elapsed_to_str(start):
-    """Return a string "hh:mm:ss" reprensenting the time elapsed since 
+    """Return a string "hh:mm:ss" reprensenting the time elapsed since
     the start time (given in seconds)."""
     return seconds_to_time(current_time() - start)
 
@@ -104,7 +102,7 @@ def get_partitions(idlist, validation_split, shuffle=True):
         shuffle (bool): If true, shuffle ids.
 
     Returns:
-        dict[str]->list[str]: a dictionnary with two keys: 'train' and 
+        dict[str]->list[str]: a dictionnary with two keys: 'train' and
             'validation'. To each key correspond a list of ids.
     """
     if shuffle:
@@ -143,7 +141,7 @@ def _step(model, data_gen, step_type='train'):
     for i in range(nbatches):
         x, y = data_gen.next_batch()
         y = kutils.to_categorical(y, 2)  # One-hot encode the labels
-        l, a = model.train_on_batch(x, y)
+        l, a = callback(x, y)
         loss += l
         acc += a
     return loss / nbatches, acc / nbatches
@@ -173,7 +171,6 @@ def validation_step(model, data_gen):
         (float, float): average loss and accuracy for the step.
     """
     return _step(model, data_gen, 'test')
-
 
 
 start = current_time()
@@ -224,7 +221,6 @@ for epoch in range(conf['epochs']):
     history['train-loss'].append(train_loss)
     history['train-accuracy'].append(train_acc)
     elapsed_train = elapsed_time(start)
-    
 
     # Validation.
     test_loss, test_acc = training_step(model, test_generator)

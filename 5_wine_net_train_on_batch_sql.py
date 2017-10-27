@@ -9,16 +9,16 @@ import time
 
 import pandas
 import numpy
+import tensorflow
 from keras.models import Sequential
 from keras.layers import Dense
-
+import keras.utils as kutils
 
 # Setup to get reproducible results.
 os.environ['PYTHONHASHSEED'] = '0'
 numpy.random.seed(42)
 random.seed(17)
-
-
+tensorflow.set_random_seed(123456)
 
 
 def seconds_to_time(seconds):
@@ -45,7 +45,7 @@ def get_partitions(idlist, validation_split, shuffle=True):
         idlist = random.sample(list(idlist), len(idlist))
     split_at = int(len(idlist) * (1 - validation_split))
     return {'train': idlist[:split_at],
-            'validation': idlist[split_at:]}
+            'test': idlist[split_at:]}
 
 
 class DataGenerator:
@@ -58,20 +58,31 @@ class DataGenerator:
         self._gen = self.generate()
 
     def __del__(self):
-        self.con.close()
+        self.con.close()  # close database connection
 
-    def next_batch(self): 
+    def number_of_batches(self):
+        """Return the number of batches the generator will produce."""
+        return round(len(self.idlist) / self.batch_size)
+
+    def shuffle(self):
+        """Shuffle internal id list."""
+        random.shuffle(self.idlist)
+
+    def next_batch(self):
+        """Get the next data batch."""
         return next(self._gen)
 
     def generate(self):
+        """Return a batch generator."""
         while 1:
             for batch in self._read_data_from_sql():
                 batch = pandas.merge(batch, self.labels, how='left', on=['id'])
                 Y = batch['label']
                 X = batch.drop(['id', 'label'], axis=1)
-                yield (X, Y)
+                yield (X.values, Y.values)
 
     def _read_data_from_sql(self):
+        """Generate the batches by reading the input SQL file."""
         chunklist = [self.idlist[i:i + self.batch_size]
                      for i in range(0, len(self.idlist), self.batch_size)]
         for i, chunk in enumerate(chunklist):
@@ -81,18 +92,26 @@ class DataGenerator:
 
 
 def current_time():
+    """Return the number of seconds since the epoch.
+
+    Equivalent to `time.time()`.
+    """
     return time.time()
 
 
 def elapsed_time(start):
+    """Return a string "hh:mm:ss" reprensenting the time elapsed since 
+    the start time (given in seconds)."""
     return seconds_to_time(current_time() - start)
 
 
 def read_labels(path):
+    """Read the label file (SQL)."""
     con = sqlite3.connect(path)
     labels = pandas.read_sql('select * from labels', con)
     con.close()
     return labels
+
 
 
 # Configuration.
@@ -108,55 +127,102 @@ labels = read_labels(config['inputfile'])
 partitions = get_partitions(labels['id'], validation_split=0.2)
 
 
-# Generators.
+# Data generators.
 training_generator = DataGenerator(labels=labels, idlist=partitions['train'], **config)
-validation_generator = DataGenerator(labels=labels, idlist=partitions['validation'], **config)
+test_generator = DataGenerator(labels=labels, idlist=partitions['test'], **config)
 
 
 # Create model
 model = Sequential()
 model.add(Dense(30, input_dim=12, activation='relu'))
 model.add(Dense(160, activation='relu'))
-model.add(Dense(1, activation='sigmoid'))
+model.add(Dense(2, activation='sigmoid'))
 
 
 # Compile model
 model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
 
-steps_per_epoch = len(partitions['train']) // config['batch_size']
+
+def _step(model, data_gen, step_type='train'):
+    """Run a single training/validation step.
+
+    Args:
+        model (keras.models.Sequential) : the network model
+        data_gen (DataGenerator): data generator
+
+    Returns:
+        (float, float): average loss and accuracy for the step.
+    """
+    callback = model.train_on_batch
+    if step_type not in ('train', 'test'):
+        raise ValueError("step_type must be chosen ('train', 'test')")
+    elif step_type == 'test':
+        callback = model.test_on_batch
+    loss, acc = 0.0, 0.0
+    nbatches = data_gen.number_of_batches()
+    for i in range(nbatches):
+        x, y = data_gen.next_batch()
+        y = kutils.to_categorical(y, 2)  # One-hot encode the labels
+        l, a = model.train_on_batch(x, y)
+        loss += l
+        acc += a
+    return loss / nbatches, acc / nbatches
 
 
-history = {'loss': [], 'accuracy': []}
+def training_step(model, data_gen):
+    """Run a training step.
+
+    Args:
+        model (keras.models.Sequential) : the network model
+        data_gen (DataGenerator): data generator
+
+    Returns:
+        (float, float): average loss and accuracy for the step.
+    """
+    return _step(model, data_gen, 'train')
+
+
+def validation_step(model, data_gen):
+    """Run a validation step.
+
+    Args:
+        model (keras.models.Sequential) : the network model
+        data_gen (DataGenerator): data generator
+
+    Returns:
+        (float, float): average loss and accuracy for the step.
+    """
+    return _step(model, data_gen, 'test')
+
+
+
+history = {
+    'train-loss': [], 'train-accuracy': [],
+    'test-loss': [], 'test-accuracy': [],
+}
+
 for epoch in range(config['epochs']):
-    print("epoch {} - ".format(epoch + 1), end='')
-    loss_list = []
-    acc_list = []
-    for i in range(steps_per_epoch):
-        x_train, y_train = training_generator.next_batch()
-        loss, acc = model.train_on_batch(x_train, y_train)
-        loss_list.append(loss)
-        acc_list.append(acc)
-    average_loss = sum(loss_list) / len(loss_list)
-    average_acc = sum(acc_list) / len(acc_list)
-    history['loss'].append(average_loss)
-    history['accuracy'].append(average_acc)
-    print("loss: {:.3f}   accuracy: {:.3f}".format(average_loss, average_acc))
+    # Shuffle training set.
+    training_generator.shuffle()
 
+    # Training.
+    train_loss, train_acc = training_step(model, training_generator)
+    history['train-loss'].append(train_loss)
+    history['train-accuracy'].append(train_acc)
 
-from matplotlib import pyplot
+    # Validation.
+    test_loss, test_acc = training_step(model, test_generator)
+    history['test-loss'].append(train_loss)
+    history['test-accuracy'].append(train_acc)
 
-pyplot.plot(history['loss'])
-pyplot.plot(history['accuracy'])
-pyplot.show()
+    print("***** epoch {} *****".format(epoch + 1))
+    print("       loss: {:.3f}        accuracy: {:.3f}".format(train_loss, train_acc))
+    print("  test loss: {:.3f}   test accuracy: {:.3f}".format(test_loss, test_acc))
 
 
 
-# Fit the model
-# model.fit_generator(generator=training_generator,
-#                     steps_per_epoch=len(partitions['train']) // config['batch_size'],
-#                     validation_data=validation_generator,
-#                     validation_steps=len(partitions['validation']) // config['batch_size'],
-#                     epochs=config['epochs'])
+
+
 
 # print("Elapsed: {}".format(elapsed_time(START)))

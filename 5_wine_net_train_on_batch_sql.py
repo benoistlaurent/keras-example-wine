@@ -173,8 +173,15 @@ def validation_step(model, data_gen):
     return _step(model, data_gen, 'test')
 
 
-start = current_time()
+def save_history_to_csv(path, history):
+    """Save history dictionary to CSV file."""
+    df = pandas.DataFrame(history)
+    df.insert(0, 'epoch', range(df.shape[0]))   # insert the epoch number as fisrt column
+    df.to_csv(path, index=False)
 
+
+
+start = current_time()
 
 # Configuration.
 conf = {
@@ -232,5 +239,7 @@ for epoch in range(conf['epochs']):
     print("  test loss: {:.3f}   test accuracy: {:.3f}".format(test_loss, test_acc), flush=True)
     print("  elapsed:", elapsed_to_str(_start), flush=True)
 
+
+save_history_to_csv('history.csv', history)
 
 print("Elapsed:", elapsed_to_str(start))
